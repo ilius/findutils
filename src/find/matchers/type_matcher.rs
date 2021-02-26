@@ -6,6 +6,7 @@
 
 use std::error::Error;
 use std::fs::FileType;
+use std::os::unix::fs::FileTypeExt;
 use walkdir::DirEntry;
 
 use super::{Matcher, MatcherIO};
@@ -17,10 +18,17 @@ pub struct TypeMatcher {
 
 impl TypeMatcher {
     pub fn new(type_string: &str) -> Result<TypeMatcher, Box<dyn Error>> {
+    	#[cfg(unix)]
         let function = match type_string {
             "f" => FileType::is_file,
             "d" => FileType::is_dir,
-            "b" | "c" | "p" | "l" | "s" | "D" => {
+            "l" => TypeMatcher::is_symlink,
+            "b" => FileType::is_block_device,
+            "c" => FileType::is_char_device,
+            "p" => FileType::is_fifo, // named pipe (FIFO)
+            "s" => FileType::is_socket,
+            // D: door (Solaris)
+            "D" => {
                 return Err(From::from(format!(
                     "Type argument {} not supported yet",
                     type_string
@@ -33,9 +41,30 @@ impl TypeMatcher {
                 )))
             }
         };
+        #[cfg(not(unix))]
+        let function = match type_string {
+            "f" => FileType::is_file,
+            "d" => FileType::is_dir,
+            "l" => TypeMatcher::is_symlink,
+            _ => {
+                return Err(From::from(format!(
+                    "Unrecognised type argument {}",
+                    type_string
+                )))
+            }
+        };
         Ok(TypeMatcher {
             file_type_fn: function,
         })
+    }
+
+    pub fn is_symlink(file_type: &FileType) -> bool {
+        // to check -H -L -P flags (not currently supported) here
+        // from "man find":
+        // l: symbolic link; this is never true if the -L option or the -follow
+        // option is in effect, unless the symbolic link is broken.
+        // If you want to search for symbolic links when -L is in effect, use -xtype.
+        return file_type.is_symlink();
     }
 
     pub fn new_box(type_string: &str) -> Result<Box<dyn Matcher>, Box<dyn Error>> {
